@@ -1,4 +1,8 @@
 import os
+# Force offline mode
+os.environ['HF_DATASETS_OFFLINE'] = '1'
+os.environ['TRANSFORMERS_OFFLINE'] = '1'
+
 import json
 import argparse
 import subprocess

@@ -1,4 +1,9 @@
 import os
+# Force offline mode to prevent network connection attempts
+os.environ['HF_DATASETS_OFFLINE'] = '1'
+os.environ['TRANSFORMERS_OFFLINE'] = '1'
+os.environ['MS_OFFLINE'] = '1' # ModelScope offline flag if applicable
+
 import torch
 from datasets import load_dataset
 from swift.llm import get_model_tokenizer, get_template, get_dataset

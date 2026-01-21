@@ -12,6 +12,15 @@ pip install ms-swift -U
 pip install vllm
 ```
 
+### 断网环境说明 (Offline Mode)
+本项目脚本已默认配置为离线模式（设置了 `HF_DATASETS_OFFLINE=1` 等环境变量）。
+只要确保：
+1. 模型权重已完整下载到本地。
+2. 数据集已通过 `prepare_data.py` 转换并在本地。
+3. Python 环境依赖已安装。
+
+程序不会尝试连接互联网进行更新或下载。
+
 ## 2. 数据准备
 
 原始数据位于 `/inspire/hdd/project/embodied-multimodality/public/VLMPuzzle/dataset`。
