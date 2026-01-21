@@ -18,7 +18,7 @@ pip install vllm
 你需要运行我编写的 `prepare_data.py` 脚本，将其转换为 ms-swift 训练所需的 JSONL 格式。
 
 ```bash
-cd /home/zillionx/NLP
+cd /home/zillionx/NLP/Qwen3-VL-GRPO
 python prepare_data.py \
     --data_root /inspire/hdd/project/embodied-multimodality/public/VLMPuzzle/dataset \
     --output_path train.jsonl
