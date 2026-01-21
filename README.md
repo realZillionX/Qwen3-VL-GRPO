@@ -65,7 +65,7 @@ python infer_precheck.py \
 ### 自定义奖励函数 (`rewards.py`)
 - `reward_eyeballing`: 检查模型输出是否匹配正确选项 (A-E)。
 - `reward_maze`: 检查模型输出的路径列表是否与标准答案完全一致。
-- `reward_format`: 一个基础的格式奖励（示例中给予非空输出微小奖励）。
+- **自动分发**：`train_grpo.py` 中的 `custom_reward_manager` 会根据 `solution` 字段的格式（是单个字母还是列表字符串）自动判断任务类型，从而调用对应的评分逻辑。无需额外的 `task_type` 字段。
 
 ### 开始训练
 

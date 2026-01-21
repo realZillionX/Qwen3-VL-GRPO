@@ -18,49 +18,31 @@ logger = get_logger()
 
 def custom_reward_manager(completions, solution, **kwargs):
     """
-    Manager to dispatch rewards based on task type.
-    Note: GRPOTrainer passes generic kwargs. We need to know which reward to apply.
-    But usually reward functions are applied to ALL samples.
-    If we have mixed data, we need to return 0.0 for irrelevant tasks or handle it inside the function.
-    Our `dataset` format has `task_type`.
-    MS-Swift passes inputs/rows to reward function if we configure it?
-    In GRPOTrainer code:
-      reward_kwargs.update(RowPreprocessor.rows_to_batched(reward_inputs))
-    So `kwargs` will contain batched 'task_type' if it was in the input data.
+    Manager to dispatch rewards based on solution format.
+    Auto-detects task type:
+    - If solution looks like a list "[...]", it's Maze.
+    - If solution is a single letter "A"-"E", it's Eyeballing.
     """
-    # kwargs will contain 'task_type' as a list if we included it in dataset and it passed through.
-    # We should verify if ms-swift allows passing custom columns.
-    # If not, we can infer from 'solution' format or 'query'.
-    
-    task_types = kwargs.get('task_type', [])
-    solutions = kwargs.get('solution', [])
-    
     rewards = []
     
-    # We'll compute rewards row-by-row to be safe with mixed batches
-    # Though vectorization is better, let's keep it simple for custom logic
-    
-    # Actually, GRPOTrainer expects the function to return a list/tensor of rewards for the batch.
-    # We can delegate to specific functions.
-    
-    # Since we can't easily vector-mix different functions in one pass without logic:
-    # We will implement a monolithic reward function here or wrapped.
-    
-    # Let's iterate
-    eyeballing_rewards = reward_eyeballing(completions, solutions)
-    maze_rewards = reward_maze(completions, solutions)
-    
-    final_rewards = []
-    for i, t_type in enumerate(task_types):
-        if t_type == 'eyeballing':
-            final_rewards.append(eyeballing_rewards[i])
-        elif t_type == 'maze':
-            # normalize maze reward if needed
-            final_rewards.append(maze_rewards[i])
+    # We'll compute rewards row-by-row
+    for i, (completion, sol) in enumerate(zip(completions, solution)):
+        sol = sol.strip()
+        
+        # Auto-detect task type
+        if sol.startswith('[') and sol.endswith(']'):
+            # Maze Task
+            # Pass as list to reuse existing function logic which expects lists
+            # But reward_maze expects a list of completions, so we wrap and unwrap or call distinct logic
+            # Let's call the specific logic for this single item
+            r = reward_maze([completion], [sol])[0]
         else:
-            final_rewards.append(0.0)
+            # Eyeballing Task (Assumption: single letter)
+            r = reward_eyeballing([completion], [sol])[0]
             
-    return final_rewards
+        rewards.append(r)
+            
+    return rewards
 
 def main():
     # User args (can be replaced by ArgumentParser for more flexibility)
