@@ -5,55 +5,42 @@ def reward_eyeballing(completions, solution, **kwargs):
     """
     Reward function for eyeballing task.
     Correct Answer is a single letter (A-E).
-    Reward: 1.0 if correct, 0.0 otherwise.
+    Rules:
+    - Text inside <answer> must be exactly one letter.
+    - If not single letter (e.g. "A." or "Option A"): -1.0 (Format Error).
+    - If single letter but wrong (e.g. "B" when ans is "A", or "Z"): 0.0.
+    - If correct single letter: 1.0.
     """
     rewards = []
     for completion, sol in zip(completions, solution):
-        # 1. Extract content from <answer>...</answer> if present
-        # If explicitly found, use that content. If not, fallback to full text (or 0 reward).
+        # 1. Extract content from <answer>...</answer>
         start_tag = "<answer>"
         end_tag = "</answer>"
+        text = completion
         if start_tag in completion and end_tag in completion:
             try:
-                # Find the LAST answer block if multiple (or first, but typically last is result)
-                # Let's take the content of the last matching block
                 start_idx = completion.rfind(start_tag) + len(start_tag)
                 end_idx = completion.find(end_tag, start_idx)
                 if end_idx != -1:
                     text = completion[start_idx:end_idx]
-                else:
-                    text = completion
             except:
-                 text = completion
-        else:
-            text = completion
-
-        # Visualize extraction for debugging if needed (or just proceed)
-        
-        # 2. Heuristic extraction from the (extracted) text
-        # Using a regex to find "A", "B", "C", "D", "E"
+                 pass
         
         # Normalize
         text = text.strip()
-
-        
-        # Normalize
         sol = sol.strip()
         
-        # Pattern: look for explicit "Option X" or just "X" at the end
-        # Simple approach: Check if the solution letter is present and no other letters are prioritized?
-        # Or blindly check strict match if the model is good?
-        # Let's try to extract the last capital letter in the range A-E.
-        
-        matches = re.findall(r'[A-E]', text)
-        if matches:
-            prediction = matches[-1] # Take the last one
-            if prediction == sol:
-                rewards.append(1.0) # Correct
-            else:
-                rewards.append(0.0) # Wrong answer, but valid format
+        # Strict Format Check
+        if len(text) != 1 or not text.isalpha():
+            rewards.append(-1.0)
+            continue
+            
+        # Is a single letter
+        # Case Insensitive comparison just in case, though usually upper
+        if text.upper() == sol.upper():
+            rewards.append(1.0)
         else:
-            rewards.append(-1.0) # Format Error: No valid option found
+            rewards.append(0.0)
             
     return rewards
 
@@ -61,46 +48,79 @@ def reward_maze(completions, solution, **kwargs):
     """
     Reward function for maze task.
     Solution is a JSON string of a list of integers, e.g. "[1, 2, 3]".
-    Completion should be a list of integers.
-    Reward: 1.0 if exact match of path, partial reward for valid format? 
-    For GRPO, binary reward 1.0/0.0 is standard, but soft reward for partial path correctness could be added.
-    Here we stick to strict correctness for simplicity, or maybe checking endpoints.
+    Rules:
+    - Must be a valid list format. If not: -1.0.
+    - If Exact Match: 1.0.
+    - If Partial: (LongestPrefixMatch + LongestSuffixMatch) / PathLen.
     """
     rewards = []
     for completion, sol_str in zip(completions, solution):
         try:
             # Parse solution
             sol_path = json.loads(sol_str)
-            
+            total_len = len(sol_path)
+            if total_len == 0:
+                rewards.append(0.0) # Should not happen
+                continue
+
             # Extract content from <answer>...</answer>
+            extract_content = completion
             start_tag = "<answer>"
             end_tag = "</answer>"
             if start_tag in completion and end_tag in completion:
                 start_idx = completion.rfind(start_tag) + len(start_tag)
                 end_idx = completion.find(end_tag, start_idx)
                 if end_idx != -1:
-                    completion = completion[start_idx:end_idx]
+                    extract_content = completion[start_idx:end_idx]
 
             # Parse completion 
             # Look for a list pattern "[...]"
-            match = re.search(r'\[(.*?)\]', completion, re.DOTALL)
+            match = re.search(r'\[(.*?)\]', extract_content, re.DOTALL)
             if match:
                 content = match.group(1)
                 # Split by comma
                 try:
-                    pred_path = [int(x.strip()) for x in content.split(',') if x.strip().isdigit()]
+                    pred_path = [int(x.strip()) for x in content.split(',') if x.strip() and (x.strip().isdigit() or x.strip().lstrip('-').isdigit())]
                     
+                    # Logic
                     if pred_path == sol_path:
-                        rewards.append(1.0) # Correct
+                        rewards.append(1.0)
                     else:
-                        rewards.append(0.0) # Wrong path, but valid format
-                except:
-                    rewards.append(-1.0) # Format Error: List content invalid (not ints)
+                        # Compute Prefix Match
+                        prefix_len = 0
+                        for p, s in zip(pred_path, sol_path):
+                            if p == s:
+                                prefix_len += 1
+                            else:
+                                break
+                        
+                        # Compute Suffix Match
+                        suffix_len = 0
+                        for p, s in zip(reversed(pred_path), reversed(sol_path)):
+                            if p == s:
+                                suffix_len += 1
+                            else:
+                                break
+                                
+                        # Formula: (Pre + Suf) / Total
+                        # Note: If pred_path is exactly sol_path, this logic would define Pre=Len, Suf=Len => 2.0
+                        # But we handled exact match above with return 1.0.
+                        
+                        # Edge case: If paths overlap heavily but distinct? 
+                        # E.g. A=[1,2], B=[1]. Pre=1, Suf=0. Score=0.5.
+                        # E.g. A=[1,2,3], B=[1,9,3]. Pre=1, Suf=1. Total=3. Score=2/3.
+                        
+                        score = (prefix_len + suffix_len) / total_len
+                        rewards.append(score)
+                        
+                except Exception:
+                     # Parsed list but content error?
+                    rewards.append(-1.0)
             else:
                 rewards.append(-1.0) # Format Error: No list found
                 
         except Exception:
-            rewards.append(0.0) # Should not happen unless solution parsing fails
+            rewards.append(-1.0) # General parse error
             
     return rewards
 
