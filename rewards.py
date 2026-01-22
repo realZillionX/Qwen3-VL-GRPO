@@ -102,15 +102,14 @@ def reward_maze(completions, solution, **kwargs):
                             else:
                                 break
                                 
-                        # Formula: (Pre + Suf) / Total
-                        # Note: If pred_path is exactly sol_path, this logic would define Pre=Len, Suf=Len => 2.0
-                        # But we handled exact match above with return 1.0.
+                        # Calculation with safeguards:
+                        # 1. Denominator use max length to penalize length mismatch (too short or too long)
+                        # 2. Numerator clamped to len(sol) to avoid double counting overlaps (e.g. palindrome)
                         
-                        # Edge case: If paths overlap heavily but distinct? 
-                        # E.g. A=[1,2], B=[1]. Pre=1, Suf=0. Score=0.5.
-                        # E.g. A=[1,2,3], B=[1,9,3]. Pre=1, Suf=1. Total=3. Score=2/3.
+                        effective_match = min(total_len, prefix_len + suffix_len)
+                        denom = max(total_len, len(pred_path))
                         
-                        score = (prefix_len + suffix_len) / total_len
+                        score = effective_match / denom
                         rewards.append(score)
                         
                 except Exception:
