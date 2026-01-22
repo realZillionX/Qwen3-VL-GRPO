@@ -13,7 +13,7 @@ import torch
 def main():
     parser = argparse.ArgumentParser(description="Pre-check inference using ms-swift")
     parser.add_argument("--model_path", type=str, required=True, help="Path to Qwen3-VL-32B-Thinking model")
-    parser.add_argument("--data_path", type=str, default="train.jsonl", help="Path to prepared jsonl data")
+    parser.add_argument("--data_path", type=str, default="train_sft.jsonl", help="Path to prepared jsonl data")
     parser.add_argument("--num_samples", type=int, default=5, help="Number of samples to test")
     parser.add_argument("--device", type=str, default="cuda:0", help="Device to use")
     

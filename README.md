@@ -68,7 +68,7 @@ python prepare_data.py \
 
 ```json
 {
-  "query": "Please solve this maze...\n不要输出思考过程，直接输出答案。", // SFT Prompt
+  "query": "Which point looks like... \n不要输出思考过程，直接输出答案。", // SFT Prompt (针对不同任务会有不同提问)
   "response": "[1, 2, 3]",                    // SFT用于监督：无标签
   "images": ["/abs/path/to/image.png"],
   "solution": "[1, 2, 3]"             
@@ -77,7 +77,7 @@ python prepare_data.py \
 **或者 (GRPO 格式):**
 ```json
 {
-  "query": "Please solve this maze...\n输出思考过程，并把答案用<answer></answer>包裹。", // GRPO Prompt
+  "query": "Which point looks like... \n输出思考过程，并把答案用<answer></answer>包裹。", // GRPO Prompt
   "response": "<answer>[1, 2, 3]</answer>",   // GRPO训练时模型会自动生成带标签的回复
   ...
 }
