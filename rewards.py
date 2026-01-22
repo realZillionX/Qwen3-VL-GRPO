@@ -38,7 +38,6 @@ def reward_eyeballing(completions, solution, **kwargs):
 
         
         # Normalize
-        text = completion.strip()
         sol = sol.strip()
         
         # Pattern: look for explicit "Option X" or just "X" at the end
@@ -50,11 +49,11 @@ def reward_eyeballing(completions, solution, **kwargs):
         if matches:
             prediction = matches[-1] # Take the last one
             if prediction == sol:
-                rewards.append(1.0)
+                rewards.append(1.0) # Correct
             else:
-                rewards.append(0.0)
+                rewards.append(0.0) # Wrong answer, but valid format
         else:
-            rewards.append(0.0)
+            rewards.append(-1.0) # Format Error: No valid option found
             
     return rewards
 
@@ -92,18 +91,16 @@ def reward_maze(completions, solution, **kwargs):
                     pred_path = [int(x.strip()) for x in content.split(',') if x.strip().isdigit()]
                     
                     if pred_path == sol_path:
-                        rewards.append(1.0)
+                        rewards.append(1.0) # Correct
                     else:
-                        # Optional: Partial reward based on Longest Common Subsequence or validity
-                        # For now, 0.0
-                        rewards.append(0.0)
+                        rewards.append(0.0) # Wrong path, but valid format
                 except:
-                    rewards.append(0.0)
+                    rewards.append(-1.0) # Format Error: List content invalid (not ints)
             else:
-                rewards.append(0.0)
+                rewards.append(-1.0) # Format Error: No list found
                 
         except Exception:
-            rewards.append(0.0)
+            rewards.append(0.0) # Should not happen unless solution parsing fails
             
     return rewards
 
