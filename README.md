@@ -1,121 +1,136 @@
-# Qwen3-VL-32B-Thinking GRPO 训练指南
+# Qwen3-VL-Train: SFT & GRPO Training Framework
 
-本文档将指导你如何在 8x H200 的服务器环境下，使用 `ms-swift` 对 `Qwen3-VL-32B-Thinking` 进行 GRPO 训练。
+**[English]** | [简体中文](#简体中文)
 
-## 1. 环境准备
+本项目是针对 **Qwen3-VL-32B-Thinking** 模型（及其他 Qwen-VL 系列）的完整多模态训练框架。
+专为 **8x H200** 服务器环境设计，支持全离线运行。
 
-请确保服务器上已经安装了 `ms-swift` 以及相关的依赖 (DeepSpeed, vLLM 等)。
+主要包含两个核心训练阶段（双向结构）：
+1.  **Phase 1: SFT (Supervised Fine-Tuning - 监督微调)**
+    *   **目标**：让模型适应特定的输出格式（如 `<answer>` 标签）和学会基础的解题逻辑。
+    *   **输入**：Image + Prompt
+    *   **目标**：Reference Response (Ground Truth)
+2.  **Phase 2: GRPO (Group Relative Policy Optimization - 强化学习)**
+    *   **目标**：利用自定义奖励函数（Visual Reward & Logic Reward）进一步提升模型的推理能力和正确率。
+    *   **输入**：Image + Prompt
+    *   **目标**：Maximize Reward (No Critic Model required)
 
+---
+
+## <span id="简体中文">目录 (Table of Contents)</span>
+
+1.  [环境与模型准备](#1-环境与模型准备)
+2.  [数据准备 (Data Preparation)](#2-数据准备-data-preparation)
+3.  [阶段一：SFT 监督微调](#3-阶段一sft-监督微调)
+4.  [阶段二：GRPO 强化学习](#4-阶段二grpo-强化学习)
+5.  [自定义奖励函数](#5-自定义奖励函数)
+6.  [其他工具](#6-其他工具)
+
+---
+
+## 1. 环境与模型准备
+
+### 1.1 安装依赖
+服务器环境需支持 CUDA，并安装 `ms-swift` 生态：
 ```bash
-# 假设已经进入了 python 环境
 pip install ms-swift -U
 pip install vllm
 ```
 
-## 0. 模型下载 (Model Download)
-**注意：由于训练环境离线，你需要先在有网的机器上下载模型，然后拷贝到服务器。**
-
-我提供了一个 `download_model.py` 脚本，用于通过 ModelScope 下载模型。
-
+### 1.2 下载模型 (离线环境必读)
+由于训练环境离线，请先在**有网环境**下载模型：
 ```bash
-# 在有网的机器上运行
+# 在有网机器运行
 python download_model.py --save_dir ./model_weights
 ```
-下载完成后，请将 `./model_weights` 目录完整拷贝到离线训练服务器的对应位置，并在 `train_grpo.py` 中修改 `model_path` 指向该目录。
+将下载好的 `./model_weights` 目录拷贝到训练服务器。
 
-### 断网环境说明 (Offline Mode)
-本项目脚本已默认配置为离线模式（设置了 `HF_DATASETS_OFFLINE=1` 等环境变量）。
-只要确保：
-1. 模型权重已完整下载到本地。
-2. 数据集已通过 `prepare_data.py` 转换并在本地。
-3. Python 环境依赖已安装。
+### 1.3 离线配置
+本项目脚本内置了以下环境变量，无需手动设置：
+*   `HF_DATASETS_OFFLINE=1`
+*   `TRANSFORMERS_OFFLINE=1`
 
-程序不会尝试连接互联网进行更新或下载。
+---
 
-## 2. 数据准备
+## 2. 数据准备 (Data Preparation)
 
-原始数据位于 `/inspire/hdd/project/embodied-multimodality/public/VLMPuzzle/dataset`。
-你需要运行我编写的 `prepare_data.py` 脚本，将其转换为 ms-swift 训练所需的 JSONL 格式。
+我们使用统一的 JSONL 格式支持 SFT 和 GRPO。脚本会自动从 `/inspire/hdd/.../VLMPuzzle` 读取数据。
 
+**运行转换脚本：**
 ```bash
-cd /home/zillionx/NLP/Qwen3-VL-GRPO
 python prepare_data.py \
     --data_root /inspire/hdd/project/embodied-multimodality/public/VLMPuzzle/dataset \
     --output_path train.jsonl
 ```
 
-运行后，你会得到一个 `train.jsonl` 文件。
-
-## 3. 推理预检查 (Optional)
-
-为了确保模型和环境正常，建议先跑一个简单的推理测试。运行 `infer_precheck.py`，它会读取 `train.jsonl` 的前 5 条数据进行测试。
-
-**注意：请在脚本中修改模型路径 `--model_path` 为你实际的 Qwen3-VL 权重路径。**
-
-```bash
-python infer_precheck.py \
-    --model_path /path/to/Qwen3-VL-32B-Thinking \
-    --data_path train.jsonl
+**生成格式示例 (`train.jsonl`)：**
+```json
+{
+  "query": "Please solve this maze...\nPlease output your final answer within <answer>...</answer> tags.",
+  "response": "<answer>[1, 2, 3]</answer>",    // SFT使用：作为监督Label
+  "images": ["/abs/path/to/image.png"],      // 两个阶段共用
+  "solution": "[1, 2, 3]"                    // GRPO使用：作为Reward判据
+}
 ```
 
-## 4. 运行训练 (Run Training)
+---
 
-本项目支持 **SFT (监督微调)** 和 **GRPO (强化学习)** 两种模式。
-建议流程：先进行 SFT 让模型适应格式，再进行 GRPO 提升能力。
+## 3. 阶段一：SFT 监督微调
 
-### 方式一：SFT (监督微调)
-用于让模型初步学会题目格式和基础解法。
+**建议**：完全没有接触过该任务格式的模型，建议先跑 SFT。
 
-1.  编辑 `train_sft.py`，修改 `model_path` 指向你的模型权重目录。
-2.  运行脚本：
-    ```bash
-    python train_sft.py
-    ```
-    输出模型默认保存在 `output/sft_qwen3_vl`。
-
-### 方式二：GRPO (强化学习)
-用于利用奖励函数进一步提升推理能力。
-**注意**：你可以将 `train_grpo.py` 中的 `model_path` 修改为 SFT 后的 checkpoint 路径（例如 `output/sft_qwen3_vl/checkpoint-xxx`），以实现两阶段训练。
-
-我为你准备了一个 Python 训练脚本 `train_grpo.py`，它封装了 `ms-swift` 的 `GRPOTrainer` 并集成了针对 `eyeballing` 和 `maze` 任务的自定义奖励函数。
-
-### 自定义奖励函数 (`rewards.py`)
-- `reward_eyeballing`:
-    - 格式分：必须在 `<answer>...</answer>` 中只包含一个字母。若违反格式（如多个字母、标点、非字母）直接给 **-1.0 分**。
-    - 正确分：格式正确的前提下，答案正确给 **1.0 分**，错误给 **0.0 分**。
-- `reward_maze`:
-    - 格式分：必须包含可解析的列表 `[...]`。若违反直接给 **-1.0 分**。
-    - 正确分：完全匹配给 **1.0 分**。
-    - 部分分：`min(总长度, 前缀匹配+后缀匹配) / max(总长度, 预测长度)`。这样既能防止重叠导致的超过 1.0，也能惩罚长度不匹配的情况。
-- **自动分发**：根据 solution 格式自动判断调用哪个函数。
-
-### 开始训练
-
-请先编辑 `train_grpo.py`，修改 `model_path` 为实际路径。
-
-```python
-# train_grpo.py
-model_path = "/path/to/Qwen3-VL-32B-Thinking" # <--- 修改这里
-```
-
-然后运行训练：
+### 3.1 配置与运行
+编辑 `train_sft.py`，确保 `model_path` 指向你的模型权重目录。
 
 ```bash
+# 单卡或多卡运行 (脚本内部自动适配)
+python train_sft.py
+```
+
+*   **输出目录**：`output/sft_qwen3_vl`
+*   **关键参数**：
+    *   `dataset`: 自动加载 `train.jsonl`
+    *   `learning_rate`: 2e-5 (默认)
+    *   `sft_type`: lora
+
+---
+
+## 4. 阶段二：GRPO 强化学习
+
+在 SFT 完成后，建议加载 SFT 的 checkpoint 继续进行 GRPO 训练。
+
+### 4.1 配置与运行
+编辑 `train_grpo.py`：
+1.  **修改 `model_path`**：指向 SFT 训练后的最佳 checkpoint (例如 `output/sft_qwen3_vl/checkpoint-100`)。
+2.  **确认参数**：`num_generations=8` (每条数据生成8个样本)，`use_vllm=True` (加速)。
+
+```bash
+# 建议使用所有 8 张计算卡
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 python train_grpo.py
 ```
 
-### 参数说明
-- 脚本中默认使用 LoRA (`peft_config`) 进行微调，以节省显存。8张 H200 非常强大，如果需要全量微调，可以将 `peft_config=None` 并配置 DeepSpeed Zero3。
-- `num_generations=8`：每个 Prompt 生成 8 个回复用于 GRPO 计算优势。
-- `use_vllm=True`：启用 vLLM 加速生成（**强烈推荐**）。
+*   **输出目录**：`output/grpo_qwen3_vl`
 
-## 5. 补充说明 (ms-swift GRPO 原理)
-`ms-swift` 的 GRPO 实现基于 HuggingFace TRL。它会在训练过程中：
-1. **Rollout**: 使用当前策略模型 (Policy Model) 生成一组回复 (Completions)。
-2. **Reward**: 使用我们在 `rewards.py` 中定义的函数对回复进行打分。
-3. **Update**: 计算 Group Relative Policy Optimization (GRPO) Loss，即组内优势 (Advantage)，并更新梯度。
+---
 
-针对你的多模态任务，我们在 Dataset 中保留了 `image` 字段，`ms-swift` 会自动将其透传给 Qwen3-VL 模型进行处理。
+## 5. 自定义奖励函数
 
-如果遇到 OOM (Out Of Memory) 问题，请尝试减小 `per_device_train_batch_size` 或 `num_generations`。
+GRPO 的核心在于 `rewards.py`，我们定义了针对 VLMPuzzle 任务的特定奖励：
+
+| 任务类型 | 奖励逻辑 | 评分规则 (Range: -1.0 ~ 1.0) |
+| :--- | :--- | :--- |
+| **Eyeballing** | **`reward_eyeballing`** | **-1.0**: 格式错误 (非单字母)<br>**0.0**: 答案错误<br>**1.0**: 答案正确 |
+| **Maze** | **`reward_maze`** | **-1.0**: 格式错误 (非列表)<br>**0.0~1.0**: 部分匹配 (Suf+Pre)/MaxLen<br>**1.0**: 完全匹配 |
+
+*   **自动分发**：`train_grpo.py` 中的 `custom_reward_manager` 会解析 `solution` 内容，自动判断是 Maze 还是 Eyeballing 任务，并调用对应的奖励函数。
+
+---
+
+## 6. 其他工具
+
+*   **`infer_precheck.py`**:
+    *   用途：在训练前测试模型是否能正常加载和推理。
+    *   用法：`python infer_precheck.py --model_path <path>`
+*   **`download_model.py`**:
+    *   用途：下载模型权重。
